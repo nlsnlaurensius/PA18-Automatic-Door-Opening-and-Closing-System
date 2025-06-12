@@ -20,13 +20,12 @@ main:
     LDI r16, (1<<UCSZ01)|(1<<UCSZ00)
     STS UCSR0C, r16
     
-    ; Configure PB1 (servo) as output
+    ; Pb1 servo output
     LDI r16, (1<<PB1)
     STS DDRB, r16
     
-    ; Configure PD4 (red LED), PD5 (green LED) as outputs
-    ; Keep PD2 as input for button
-    LDI r16, (1<<PD4)|(1<<PD5)
+    ; PD4 (TRIG) output, PD5 (ECHO) input
+    LDI r16, (1<<PD4)
     STS DDRD, r16
     
     LDI r16, 0
@@ -51,57 +50,56 @@ main:
     RCALL print_init_msg
     RCALL move_servo_right
     
-    ; Turn on red LED for closed door (initial state)
-    LDS r16, PORTD
-    ORI r16, (1<<PD4)
-    ANDI r16, ~(1<<PD5)
-    STS PORTD, r16
-    
     SEI
 
 main_loop:
-    ; Read button state
-    LDS r16, PIND
-    ANDI r16, (1<<PD2)
-    CPI r16, 0
-    BREQ button_low
-    LDI r16, 1
-    RJMP store_state
-button_low:
-    LDI r16, 0
-store_state:
-    STS button_state, r16
-    LDS r17, last_button_state
-    CP r16, r17
-    BREQ main_loop
-    STS last_button_state, r16
+    ; Add delay sebelum sensor reading
+    LDI r24, 60    ; 60ms delay lalu sensor reading
+    RCALL delay_ms
     
-    CPI r16, 1
-    BREQ button_pressed
-    RJMP debounce  
+    ; Check distance HC-SR04
+    RCALL check_distance
+    CPI r24, 0    ; Distance check return 0 / 1 di r24
+    BREQ no_object_detected
     
-button_pressed:
+    ; Object detected - check kalau door sudah open
+    LDS r16, servo_position
+    CPI r16, 0    ; 0 = door open
+    BREQ sensor_delay_and_continue    ; Door sudah open, keep delay dan continue
+    
+    ; Object detected + door closed, open
     RCALL print_door_opening
     RCALL move_servo_left
     LDI r16, 0
     STS servo_position, r16
     
-    ; Turn on green LED for open door
-    LDS r16, PORTD
-    ORI r16, (1<<PD5)
-    ANDI r16, ~(1<<PD4)
-    STS PORTD, r16
-    
+    ; Reset + start timer utk auto close
     LDI r16, 0
     STS timer_count, r16
     STS timer_count+1, r16
     LDI r16, 1
     STS override_flag, r16
     
-debounce:
-    LDI r24, 50
+    ; Add delay agar tidak tertrigger berkali kali
+    LDI r24, 200
     RCALL delay_ms
     RJMP main_loop
+
+no_object_detected:
+    ; No object detected - add delay and continue main loop
+    LDI r24, 30    ; 30ms delay antara check saat no object
+    RCALL delay_ms
+    RJMP main_loop
+
+sensor_delay_and_continue:
+    ; Door sudah open, keep delay dan continue
+    LDI r24, 30
+    RCALL delay_ms
+    RJMP main_loop
+
+end_main:
+    LDI r16, 0           ; Return value 0
+    RET                  ; Return from main
 
 move_servo_left:
     PUSH r20
@@ -232,12 +230,6 @@ close_door:
     LDI r16, 1
     STS servo_position, r16
     
-    ; Turn on red LED for closed door
-    LDS r16, PORTD
-    ORI r16, (1<<PD4)
-    ANDI r16, ~(1<<PD5)
-    STS PORTD, r16
-    
 timer_done:
     POP r18
     POP r17
@@ -283,5 +275,5 @@ msg_opening:
     .ascii "Opening Door\r\n"
     .byte 0
 msg_closing:
-    .ascii "Closing Door\r\n"
+    .ascii "Door: CLOSING   \r\n"
     .byte 0
